@@ -1,54 +1,78 @@
 #!/usr/bin/env python3
 """
-Persona Resume Agent - Vault 初始化脚本
-将 assets/vault-template 复制到用户指定目录，创建个人人物画像 Vault。
+Persona Resume Agent - Vault 初始化脚本（MCP 模式）
+将 assets/vault-template 复制到 Obsidian vault 的 persona/ 子目录下。
 
 用法：
-    python init_vault.py <目标目录>
-    python init_vault.py ~/my-persona-vault
-    python init_vault.py D:\Obsidian\my-persona-vault
+    python init_vault.py                  # 自动检测 Obsidian vault 路径
+    python init_vault.py "D:\Obsidian Vault"  # 指定 vault 路径
 """
 
 import os
 import sys
+import json
 import shutil
 from pathlib import Path
 
 
 def get_script_dir():
-    """获取脚本所在目录"""
     return Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_vault_template_dir():
-    """获取 Vault 模板目录"""
     script_dir = get_script_dir()
-    # 脚本在 scripts/ 目录下，模板在 ../assets/vault-template/
-    template_dir = script_dir.parent / "assets" / "vault-template"
-    return template_dir
+    return script_dir.parent / "assets" / "vault-template"
 
 
-def init_vault(target_dir: str):
-    """初始化 Vault"""
-    target_path = Path(target_dir).expanduser().resolve()
+def detect_obsidian_vault():
+    """从 Obsidian 配置中自动检测 vault 路径"""
+    if sys.platform == "win32":
+        config_path = Path(os.environ.get("APPDATA", "")) / "obsidian" / "obsidian.json"
+    else:
+        config_path = Path.home() / ".config" / "obsidian" / "obsidian.json"
+
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        vaults = config.get("vaults", {})
+        # 优先选择当前打开的 vault
+        for vid, vinfo in vaults.items():
+            if vinfo.get("open"):
+                return Path(vinfo["path"])
+        # 否则返回第一个
+        if vaults:
+            first = next(iter(vaults.values()))
+            return Path(first["path"])
+    except (json.JSONDecodeError, KeyError, OSError):
+        pass
+    return None
+
+
+def init_vault(vault_path: Path):
+    """将 persona 模板复制到 vault 的 persona/ 目录"""
     template_dir = get_vault_template_dir()
+    target_dir = vault_path / "persona"
 
-    # 检查模板目录是否存在
     if not template_dir.exists():
         print(f"错误：模板目录不存在：{template_dir}")
-        print("请确保在 persona-resume-agent 项目目录下运行此脚本。")
+        sys.exit(1)
+
+    if not vault_path.exists():
+        print(f"错误：Obsidian vault 目录不存在：{vault_path}")
         sys.exit(1)
 
     # 检查目标目录
-    if target_path.exists():
-        if any(target_path.iterdir()):
-            print(f"警告：目标目录已存在且不为空：{target_path}")
-            response = input("是否继续？现有文件不会被覆盖，但同名文件会被跳过。(y/N): ")
-            if response.lower() != 'y':
-                print("已取消。")
-                sys.exit(0)
+    if target_dir.exists() and any(target_dir.iterdir()):
+        print(f"警告：persona 目录已存在且不为空：{target_dir}")
+        response = input("是否继续？现有文件不会被覆盖，但同名文件会被跳过。(y/N): ")
+        if response.lower() != "y":
+            print("已取消。")
+            sys.exit(0)
     else:
-        target_path.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
 
     # 复制模板文件
     copied_count = 0
@@ -56,7 +80,7 @@ def init_vault(target_dir: str):
 
     for item in template_dir.rglob('*'):
         relative_path = item.relative_to(template_dir)
-        target_item = target_path / relative_path
+        target_item = target_dir / relative_path
 
         if item.is_dir():
             target_item.mkdir(parents=True, exist_ok=True)
@@ -70,32 +94,31 @@ def init_vault(target_dir: str):
                 copied_count += 1
                 print(f"  创建：{relative_path}")
 
-    # 输出结果
     print("\n" + "=" * 50)
-    print(f"Vault 初始化完成！")
-    print(f"  目标目录：{target_path}")
+    print("Vault 初始化完成！")
+    print(f"  Obsidian vault：{vault_path}")
+    print(f"  人物画像目录：{target_dir}")
     print(f"  新建文件：{copied_count} 个")
     print(f"  跳过文件：{skipped_count} 个")
     print("=" * 50)
     print("\n下一步：")
-    print("  1. 用 Obsidian 打开这个目录作为 Vault")
-    print("  2. 对 AI 助手说：\"开始蒸馏我的人物画像\"")
-    print("  3. 或者阅读 README.md 了解完整使用方法")
-    print("\n提示：")
-    print("  - 所有模板文件中的\"待填写\"都需要你和 AI 一起填充")
-    print("  - 不需要一次填完，随时可以中断，下次继续")
-    print("  - 应聘时把 JD 发给 AI，它会自动从 Vault 中提取素材生成简历")
+    print("  1. 确保 Obsidian 正在运行，Local REST API 插件已启用")
+    print("  2. 在 MCP 客户端中添加 Obsidian MCP 服务器（见 SKILL.md 配置说明）")
+    print("  3. 对 AI 助手说：\"开始蒸馏我的人物画像\"")
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("用法：python init_vault.py <目标目录>")
-        print("示例：python init_vault.py ~/my-persona-vault")
-        print("示例：python init_vault.py D:\\Obsidian\\my-persona-vault")
-        sys.exit(1)
+    if len(sys.argv) > 1:
+        vault_path = Path(sys.argv[1]).expanduser().resolve()
+    else:
+        vault_path = detect_obsidian_vault()
+        if vault_path is None:
+            print("错误：无法自动检测 Obsidian vault 路径。")
+            print("请手动指定：python init_vault.py <vault路径>")
+            sys.exit(1)
+        print(f"自动检测到 Obsidian vault：{vault_path}")
 
-    target_dir = sys.argv[1]
-    init_vault(target_dir)
+    init_vault(vault_path)
 
 
 if __name__ == "__main__":
